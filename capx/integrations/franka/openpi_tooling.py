@@ -533,6 +533,83 @@ class FrankaLiberoOpenPIToolMixin:
         )
         return result
 
+    def execute_openpi_native_rollout(
+        self,
+        max_steps: int = 150,
+        replan_steps: int = 5,
+        execute_actions_per_plan: int = 1,
+        resize_size: int = 224,
+        prompt: str | None = None,
+        host: str = DEFAULT_OPENPI_HOST,
+        port: int = DEFAULT_OPENPI_PORT,
+        sync_from_primary: bool = False,
+    ) -> dict[str, Any]:
+        """Keep replanning with OpenPI until done or a step budget is exhausted."""
+        if max_steps < 1:
+            raise ValueError("max_steps must be at least 1")
+        if replan_steps < 1:
+            raise ValueError("replan_steps must be at least 1")
+        if execute_actions_per_plan < 1:
+            raise ValueError("execute_actions_per_plan must be at least 1")
+
+        attempts: list[dict[str, Any]] = []
+        total_executed_steps = 0
+        obs = self.get_observation()
+        reward = 0.0
+        done = False
+        info: dict[str, Any] = {}
+        while total_executed_steps < max_steps and not done:
+            remaining = max_steps - total_executed_steps
+            execute_actions = min(execute_actions_per_plan, remaining)
+            attempt = self.execute_openpi_native_plan(
+                replan_steps=replan_steps,
+                execute_actions=execute_actions,
+                resize_size=resize_size,
+                prompt=prompt,
+                host=host,
+                port=port,
+                sync_from_primary=sync_from_primary if total_executed_steps == 0 else False,
+            )
+            attempts.append(attempt)
+            total_executed_steps += int(attempt["executed_action_count"])
+            reward = float(attempt["native_reward"])
+            done = bool(attempt["native_done"])
+            info = dict(attempt["native_info"])
+            obs = self.get_observation()
+            if int(attempt["executed_action_count"]) < execute_actions:
+                break
+
+        final_robot_cartesian_pos = np.asarray(
+            obs["robot_cartesian_pos"],
+            dtype=np.float64,
+        ).reshape(8)
+        result = {
+            "prompt": self._resolve_openpi_prompt(prompt),
+            "server_info": self.get_openpi_server_info(host=host, port=port),
+            "attempts": attempts,
+            "attempt_count": len(attempts),
+            "executed_action_count": int(total_executed_steps),
+            "execute_actions_per_plan": int(execute_actions_per_plan),
+            "native_reward": float(reward),
+            "native_done": bool(done),
+            "native_info": info,
+            "final_robot_cartesian_pos": final_robot_cartesian_pos,
+            "max_steps": int(max_steps),
+            "replan_steps": int(replan_steps),
+        }
+        self._emit_openpi_trace(
+            "execute_openpi_native_rollout",
+            prompt=result["prompt"],
+            max_steps=int(max_steps),
+            replan_steps=int(replan_steps),
+            attempt_count=len(attempts),
+            executed_action_count=int(total_executed_steps),
+            reward=float(reward),
+            done=bool(done),
+            final_position=np.round(final_robot_cartesian_pos[:3], 4).tolist(),
+        )
+        return result
+
     def execute_openpi_plan(
         self,
         replan_steps: int = 5,

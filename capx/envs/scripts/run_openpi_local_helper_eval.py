@@ -4,7 +4,7 @@ import dataclasses
 import json
 import logging
 import pathlib
-from typing import Any
+from typing import Any, Literal
 
 import imageio
 import numpy as np
@@ -24,6 +24,7 @@ OBJECT_SWAP_TARGET_PROMPTS: dict[int, list[str]] = {
 
 @dataclasses.dataclass
 class Args:
+    mode: Literal["helper", "rollout"] = "helper"
     suite_name: str = "libero_object_swap"
     task_id: int = 9
     goal_prompt: str | None = None
@@ -43,6 +44,9 @@ class Args:
     stage_before_openpi: bool = True
     replan_steps: int = 3
     execute_actions: int = 3
+    openpi_rounds: int = 1
+    max_openpi_steps: int = 150
+    execute_actions_per_plan: int = 1
     record_video: bool = False
     wrist_video: bool = False
     output_dir: str = "outputs/openpi_helper_eval"
@@ -103,20 +107,31 @@ def run(args: Args) -> None:
         before_done = bool(env.task_completed())
         before_obs = env.get_observation()
 
-        result = api.execute_openpi_local_pick_and_place(
-            goal_prompt=goal_prompt,
-            target_prompts=target_prompts,
-            basket_prompts=args.basket_prompts,
-            host=args.host,
-            port=args.port,
-            replan_steps=args.replan_steps,
-            execute_actions=args.execute_actions,
-            hover_dz=args.hover_dz,
-            grasp_dz=args.grasp_dz,
-            lift_dz=args.lift_dz,
-            place_dz=args.place_dz,
-            stage_before_openpi=args.stage_before_openpi,
-        )
+        if args.mode == "rollout":
+            result = api.execute_openpi_native_rollout(
+                max_steps=args.max_openpi_steps,
+                replan_steps=args.replan_steps,
+                execute_actions_per_plan=args.execute_actions_per_plan,
+                prompt=goal_prompt,
+                host=args.host,
+                port=args.port,
+            )
+        else:
+            result = api.execute_openpi_local_pick_and_place(
+                goal_prompt=goal_prompt,
+                target_prompts=target_prompts,
+                basket_prompts=args.basket_prompts,
+                host=args.host,
+                port=args.port,
+                replan_steps=args.replan_steps,
+                execute_actions=args.execute_actions,
+                openpi_rounds=args.openpi_rounds,
+                hover_dz=args.hover_dz,
+                grasp_dz=args.grasp_dz,
+                lift_dz=args.lift_dz,
+                place_dz=args.place_dz,
+                stage_before_openpi=args.stage_before_openpi,
+            )
 
         after_reward = float(env.compute_reward())
         after_done = bool(env.task_completed())
@@ -165,6 +180,7 @@ def run(args: Args) -> None:
                 "suite_name": args.suite_name,
                 "task_id": args.task_id,
                 "goal_prompt": goal_prompt,
+                "mode": args.mode,
                 "target_prompts": target_prompts,
                 "basket_prompts": args.basket_prompts,
                 "episodes": args.num_trials,

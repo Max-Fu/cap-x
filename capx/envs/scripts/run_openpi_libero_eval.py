@@ -34,6 +34,7 @@ class Args:
     num_steps_wait: int = 10
     num_trials_per_task: int | None = None
     seed: int = 7
+    max_steps_override: int | None = None
     video_out_path: str = "outputs/openpi_libero/videos"
     record_video: bool = False
 
@@ -79,7 +80,7 @@ def run(args: Args) -> None:
         raise KeyError(f"Suite {args.task_suite_name!r} not found. Available suites: {sorted(benchmark_dict)}")
 
     task_suite = benchmark_dict[args.task_suite_name]()
-    max_steps = _get_max_steps(args.task_suite_name)
+    max_steps = args.max_steps_override or _get_max_steps(args.task_suite_name)
     task_ids = [args.task_id] if args.task_id is not None else list(range(task_suite.n_tasks))
     video_root = pathlib.Path(args.video_out_path)
     if args.record_video:
@@ -88,6 +89,14 @@ def run(args: Args) -> None:
     client = OpenPIWebsocketClient(host=args.host, port=args.port)
     total_episodes = 0
     total_successes = 0
+
+    def _env_success(env_obj: Any) -> bool:
+        checker = getattr(env_obj.env, "check_success", None)
+        if checker is None:
+            checker = getattr(env_obj.env, "_check_success", None)
+        if checker is None:
+            raise AttributeError("LIBERO env has neither check_success nor _check_success")
+        return bool(checker())
 
     for task_id in tqdm.tqdm(task_ids, desc="tasks"):
         task = task_suite.get_task(task_id)
@@ -136,7 +145,16 @@ def run(args: Args) -> None:
                     action_plan.extend(action_chunk[: args.replan_steps])
 
                 action = np.asarray(action_plan.popleft(), dtype=np.float64)[:7]
-                obs, _, done, _ = env.step(action.tolist())
+                try:
+                    obs, _, done, _ = env.step(action.tolist())
+                except ValueError as exc:
+                    if "terminated episode" not in str(exc):
+                        raise
+                    done = _env_success(env)
+                    if done:
+                        task_successes += 1
+                        total_successes += 1
+                    break
                 if done:
                     task_successes += 1
                     total_successes += 1

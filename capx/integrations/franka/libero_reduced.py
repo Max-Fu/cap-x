@@ -96,6 +96,7 @@ class FrankaLiberoApiReduced(FrankaLiberoOpenPIToolMixin, ApiBase):
         fns["execute_openpi_raw_action"] = self.execute_openpi_raw_action
         fns["execute_openpi_native_step"] = self.execute_openpi_native_step
         fns["execute_openpi_native_plan"] = self.execute_openpi_native_plan
+        fns["execute_openpi_native_rollout"] = self.execute_openpi_native_rollout
         fns["execute_openpi_plan"] = self.execute_openpi_plan
         fns["segment_sam3_text_prompt"] = self.segment_sam3_text_prompt
         fns["segment_sam3_point_prompt"] = self.segment_sam3_point_prompt
@@ -312,6 +313,7 @@ class FrankaLiberoApiReduced(FrankaLiberoOpenPIToolMixin, ApiBase):
         port: int = 8000,
         replan_steps: int = 3,
         execute_actions: int = 3,
+        openpi_rounds: int = 1,
         hover_dz: float = 0.10,
         grasp_dz: float = 0.015,
         lift_dz: float = 0.16,
@@ -338,26 +340,43 @@ class FrankaLiberoApiReduced(FrankaLiberoOpenPIToolMixin, ApiBase):
             self.open_gripper()
             self.goto_topdown_above(np.asarray(target_before["center_world"], dtype=np.float64), dz=hover_dz)
 
-        openpi_result = self.execute_openpi_native_plan(
-            prompt=goal_prompt,
-            host=host,
-            port=port,
-            replan_steps=replan_steps,
-            execute_actions=execute_actions,
-        )
-
-        obs_after = self.get_observation()
-        target_after, target_query = locate_target()
-        gripper_open_fraction = float(obs_after["robot_cartesian_pos"][-1])
-        ee_xyz = np.asarray(obs_after["robot_cartesian_pos"][:3], dtype=np.float64)
-
         picked = False
-        if target_after is None:
-            picked = gripper_open_fraction < 0.35
-        elif target_before is not None:
-            moved_up = float(target_after["center_world"][2]) > float(target_before["center_world"][2]) + 0.03
-            near_gripper = np.linalg.norm(np.asarray(target_after["center_world"], dtype=np.float64) - ee_xyz) < 0.08
-            picked = gripper_open_fraction < 0.35 and (moved_up or near_gripper)
+        openpi_attempts: list[dict[str, Any]] = []
+        target_after = None
+        gripper_open_fraction = 1.0
+        ee_xyz = np.zeros(3, dtype=np.float64)
+        rounds = max(1, int(openpi_rounds))
+        for round_idx in range(rounds):
+            openpi_result = self.execute_openpi_native_plan(
+                prompt=goal_prompt,
+                host=host,
+                port=port,
+                replan_steps=replan_steps,
+                execute_actions=execute_actions,
+            )
+            openpi_attempts.append(openpi_result)
+
+            obs_after = self.get_observation()
+            target_after, target_query = locate_target()
+            gripper_open_fraction = float(obs_after["robot_cartesian_pos"][-1])
+            ee_xyz = np.asarray(obs_after["robot_cartesian_pos"][:3], dtype=np.float64)
+
+            if bool(openpi_result.get("native_done")) or float(openpi_result.get("native_reward", 0.0)) > 0.0:
+                picked = True
+                break
+
+            if target_after is None:
+                picked = gripper_open_fraction < 0.35
+            elif target_before is not None:
+                moved_up = float(target_after["center_world"][2]) > float(target_before["center_world"][2]) + 0.03
+                near_gripper = np.linalg.norm(np.asarray(target_after["center_world"], dtype=np.float64) - ee_xyz) < 0.08
+                picked = gripper_open_fraction < 0.35 and (moved_up or near_gripper)
+            else:
+                near_gripper = np.linalg.norm(np.asarray(target_after["center_world"], dtype=np.float64) - ee_xyz) < 0.08
+                picked = gripper_open_fraction < 0.35 and near_gripper
+
+            if picked:
+                break
 
         if target_after is not None and not picked:
             target_xyz = np.asarray(target_after["center_world"], dtype=np.float64)
@@ -397,7 +416,8 @@ class FrankaLiberoApiReduced(FrankaLiberoOpenPIToolMixin, ApiBase):
             "picked": picked,
             "target_visible_after": target_after is not None,
             "basket_found": basket is not None,
-            "openpi_result": openpi_result,
+            "openpi_result": openpi_attempts[-1],
+            "openpi_attempts": openpi_attempts,
         }
 
     def get_oriented_bounding_box_from_3d_points(self, points: np.ndarray) -> dict[str, Any]:
@@ -1125,6 +1145,7 @@ class FrankaLiberoVLAApiReduced(FrankaLiberoApiReduced):
             "execute_openpi_raw_action": self.execute_openpi_raw_action,
             "execute_openpi_native_step": self.execute_openpi_native_step,
             "execute_openpi_native_plan": self.execute_openpi_native_plan,
+            "execute_openpi_native_rollout": self.execute_openpi_native_rollout,
             "execute_openpi_plan": self.execute_openpi_plan,
             "get_openpi_action_chunk": self.get_openpi_action_chunk,
             "get_openpi_subgoal": self.get_openpi_subgoal,
@@ -1158,6 +1179,7 @@ class FrankaLiberoVLAMinimalApiReduced(FrankaLiberoApiReduced):
         return {
             "get_observation": self.get_observation,
             "execute_openpi_native_plan": self.execute_openpi_native_plan,
+            "execute_openpi_native_rollout": self.execute_openpi_native_rollout,
             "execute_openpi_local_pick_and_place": self.execute_openpi_local_pick_and_place,
             "segment_sam3_text_prompt": self.segment_sam3_text_prompt,
             "segment_sam3_point_prompt": self.segment_sam3_point_prompt,

@@ -230,6 +230,17 @@ Notes:
 - Butter is now the best target because the direct VLA policy is materially stronger there than on other sampled tasks.
 - The remaining problem is integration: the helper / hybrid path is still worse than direct VLA on matched seeds.
 
+## Current Best Performance
+
+- Best clean CaP-X result so far on the targeted 20-trial LIBERO-PRO runs:
+  - Butter (`libero_object_swap:6`): `17/20`
+- Best pure direct VLA result so far on the targeted 20-trial LIBERO-PRO runs:
+  - Butter (`libero_object_swap:6`): `9/20`
+- Best completed hybrid result so far on the targeted reruns:
+  - Orange juice (`libero_object_swap:9`): `3/10` with `hillclimb_object_swap_9_vla_minimal_v4.yaml`
+- Best completed direct-VLA budget point on butter in the latest max-step sweep:
+  - `400` steps: `3/5`
+
 ## Latest Helper Ablation Snapshot
 
 These runs remove the coding model entirely and test only the local helper pattern:
@@ -249,6 +260,58 @@ Interpretation:
   - fixing object aliases
   - matching the direct baseline's `5/5` OpenPI horizon
 - On matched seeds for butter, direct VLA gets `1/5` while the helper gets `0/5`, so the helper remains worse but only slightly.
+
+## Latest Long-Horizon Butter Ablations
+
+These runs test whether OpenPI simply needed a longer rollout budget on the strongest VLA task, butter (`libero_object_swap:6`).
+
+### Direct OpenPI / pure VLA
+
+| Max steps | Result |
+|---|---:|
+| `10` | `0/5` |
+| `50` | `0/5` |
+| `100` | `0/5` |
+| `200` | `1/5` |
+| `400` | `3/5` |
+| `600` | `0/5` |
+| `800` | `2/5` |
+| `1000` | `2/5` |
+
+Logs:
+
+- `outputs/openpi_libero/object_swap_task6_vla_budget10_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget50_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget100_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget200_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget400_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget600_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget800_5trials.log`
+- `outputs/openpi_libero/object_swap_task6_vla_budget1000_5trials_rerun3.log`
+
+### CaP-X native OpenPI rollout wrapper
+
+This is the no-LLM rollout-only wrapper inside CaP-X, using native OpenPI execution.
+
+| Wrapper setting | Result |
+|---|---:|
+| coarse wrapper, `200` steps | `1/5` |
+| coarse wrapper, `400` steps | `2/5` |
+
+Artifacts:
+
+- `outputs/openpi_rollout_task6_budget200_5trials/aggregate.json`
+- `outputs/openpi_rollout_task6_budget400_5trials/aggregate.json`
+
+Interpretation:
+
+- Longer OpenPI horizon definitely matters on butter.
+- But more steps are not monotonically better; the best completed direct point so far is still `400` steps.
+- The CaP-X wrapper improves with longer horizons too, but still trails the direct baseline at the same budget (`2/5` vs `3/5` at `400`).
+- The most plausible remaining mismatch is control granularity:
+  - direct baseline: replan a `5`-step chunk, execute `1` raw action, reobserve, repeat
+  - older wrapper: replan a `5`-step chunk, execute all `5` actions before reobserving
+- A more faithful wrapper rerun is now in progress using `execute_actions_per_plan=1`.
 
 ## Current Artifact Pointers
 
